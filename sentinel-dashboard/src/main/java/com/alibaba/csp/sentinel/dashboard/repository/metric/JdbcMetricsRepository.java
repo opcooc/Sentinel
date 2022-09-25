@@ -13,16 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package com.alibaba.csp.sentinel.dashboard.repository.metric;
 
-import com.alibaba.csp.sentinel.dashboard.datasource.entity.MetricEntity;
-import com.alibaba.csp.sentinel.util.StringUtil;
-import com.alibaba.csp.sentinel.util.TimeUtil;
-import org.springframework.stereotype.Component;
-
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -30,24 +25,30 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 
+import javax.annotation.Resource;
+
+import org.springframework.beans.BeanUtils;
+import org.springframework.stereotype.Component;
+import org.springframework.util.CollectionUtils;
+
+import com.alibaba.csp.sentinel.dashboard.datasource.entity.JdbcMetricEntity;
+import com.alibaba.csp.sentinel.dashboard.datasource.entity.MetricEntity;
+import com.alibaba.csp.sentinel.dashboard.mapper.MetricMapper;
+import com.alibaba.csp.sentinel.util.StringUtil;
+
 /**
- * Caches metrics data in a period of time in memory.
+ * Caches metrics data in a period of time to jdbc.
  *
  * @author Carpenter Lee
  * @author Eric Zhao
  */
-//@Component
-public class InMemoryMetricsRepository implements MetricsRepository<MetricEntity> {
-
-    private static final long MAX_METRIC_LIVE_TIME_MS = 1000 * 60 * 5;
-
-    /**
-     * {@code app -> resource -> timestamp -> metric}
-     */
-    private Map<String, Map<String, LinkedHashMap<Long, MetricEntity>>> allMetrics = new ConcurrentHashMap<>();
+@Component
+public class JdbcMetricsRepository implements MetricsRepository<MetricEntity> {
 
     private final ReentrantReadWriteLock readWriteLock = new ReentrantReadWriteLock();
 
+    @Resource
+    private MetricMapper metricMapper;
 
     @Override
     public void save(MetricEntity entity) {
@@ -56,14 +57,7 @@ public class InMemoryMetricsRepository implements MetricsRepository<MetricEntity
         }
         readWriteLock.writeLock().lock();
         try {
-            allMetrics.computeIfAbsent(entity.getApp(), e -> new HashMap<>(16))
-                    .computeIfAbsent(entity.getResource(), e -> new LinkedHashMap<Long, MetricEntity>() {
-                        @Override
-                        protected boolean removeEldestEntry(Entry<Long, MetricEntity> eldest) {
-                            // Metric older than {@link #MAX_METRIC_LIVE_TIME_MS} will be removed.
-                            return eldest.getKey() < TimeUtil.currentTimeMillis() - MAX_METRIC_LIVE_TIME_MS;
-                        }
-                    }).put(entity.getTimestamp().getTime(), entity);
+            metricMapper.insert(toPo(entity));
         } finally {
             readWriteLock.writeLock().unlock();
         }
@@ -77,7 +71,9 @@ public class InMemoryMetricsRepository implements MetricsRepository<MetricEntity
         }
         readWriteLock.writeLock().lock();
         try {
-            metrics.forEach(this::save);
+            List<JdbcMetricEntity> metricList = new ArrayList<>();
+            metrics.forEach(metric -> metricList.add(toPo(metric)));
+            metricMapper.insertBatch(metricList);
         } finally {
             readWriteLock.writeLock().unlock();
         }
@@ -87,24 +83,20 @@ public class InMemoryMetricsRepository implements MetricsRepository<MetricEntity
     public List<MetricEntity> queryByAppAndResourceBetween(String app, String resource,
                                                            long startTime, long endTime) {
         List<MetricEntity> results = new ArrayList<>();
+
         if (StringUtil.isBlank(app)) {
             return results;
         }
-        Map<String, LinkedHashMap<Long, MetricEntity>> resourceMap = allMetrics.get(app);
-        if (resourceMap == null) {
-            return results;
-        }
-        LinkedHashMap<Long, MetricEntity> metricsMap = resourceMap.get(resource);
-        if (metricsMap == null) {
-            return results;
-        }
+
         readWriteLock.readLock().lock();
         try {
-            for (Entry<Long, MetricEntity> entry : metricsMap.entrySet()) {
-                if (entry.getKey() >= startTime && entry.getKey() <= endTime) {
-                    results.add(entry.getValue());
-                }
+            List<JdbcMetricEntity> metricList = metricMapper.selectList(app, resource, startTime, endTime);
+
+            if (CollectionUtils.isEmpty(metricList)) {
+                return results;
             }
+
+            metricList.forEach(e -> results.add(toPo(e)));
             return results;
         } finally {
             readWriteLock.readLock().unlock();
@@ -117,32 +109,32 @@ public class InMemoryMetricsRepository implements MetricsRepository<MetricEntity
         if (StringUtil.isBlank(app)) {
             return results;
         }
-        // resource -> timestamp -> metric
-        Map<String, LinkedHashMap<Long, MetricEntity>> resourceMap = allMetrics.get(app);
-        if (resourceMap == null) {
-            return results;
-        }
+
         final long minTimeMs = System.currentTimeMillis() - 1000 * 60;
         Map<String, MetricEntity> resourceCount = new ConcurrentHashMap<>(32);
 
         readWriteLock.readLock().lock();
         try {
-            for (Entry<String, LinkedHashMap<Long, MetricEntity>> resourceMetrics : resourceMap.entrySet()) {
-                for (Entry<Long, MetricEntity> metrics : resourceMetrics.getValue().entrySet()) {
-                    if (metrics.getKey() < minTimeMs) {
-                        continue;
-                    }
-                    MetricEntity newEntity = metrics.getValue();
-                    if (resourceCount.containsKey(resourceMetrics.getKey())) {
-                        MetricEntity oldEntity = resourceCount.get(resourceMetrics.getKey());
-                        oldEntity.addPassQps(newEntity.getPassQps());
-                        oldEntity.addRtAndSuccessQps(newEntity.getRt(), newEntity.getSuccessQps());
-                        oldEntity.addBlockQps(newEntity.getBlockQps());
-                        oldEntity.addExceptionQps(newEntity.getExceptionQps());
-                        oldEntity.addCount(1);
-                    } else {
-                        resourceCount.put(resourceMetrics.getKey(), MetricEntity.copyOf(newEntity));
-                    }
+            List<JdbcMetricEntity> metricList = metricMapper.selectList(app, minTimeMs);
+
+            List<MetricEntity> metricEntityList = new ArrayList<>();
+            metricList.forEach(e -> metricEntityList.add(toPo(e)));
+
+            if (CollectionUtils.isEmpty(metricEntityList)) {
+                return results;
+            }
+
+            for (MetricEntity newEntity : metricEntityList) {
+                String resource = newEntity.getResource();
+                if (resourceCount.containsKey(resource)) {
+                    MetricEntity oldEntity = resourceCount.get(resource);
+                    oldEntity.addPassQps(newEntity.getPassQps());
+                    oldEntity.addRtAndSuccessQps(newEntity.getRt(), newEntity.getSuccessQps());
+                    oldEntity.addBlockQps(newEntity.getBlockQps());
+                    oldEntity.addExceptionQps(newEntity.getExceptionQps());
+                    oldEntity.addCount(1);
+                } else {
+                    resourceCount.put(resource, MetricEntity.copyOf(newEntity));
                 }
             }
             // Order by last minute b_qps DESC.
@@ -162,5 +154,17 @@ public class InMemoryMetricsRepository implements MetricsRepository<MetricEntity
         } finally {
             readWriteLock.readLock().unlock();
         }
+    }
+
+    private JdbcMetricEntity toPo(MetricEntity metricEntity) {
+        JdbcMetricEntity metric = new JdbcMetricEntity();
+        BeanUtils.copyProperties(metricEntity, metric, JdbcMetricEntity.class);
+        return metric;
+    }
+
+    private MetricEntity toPo(JdbcMetricEntity metric) {
+        MetricEntity metricEntity = new MetricEntity();
+        BeanUtils.copyProperties(metric, metricEntity, MetricEntity.class);
+        return metricEntity;
     }
 }
