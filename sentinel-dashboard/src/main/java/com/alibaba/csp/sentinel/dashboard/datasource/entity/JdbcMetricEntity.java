@@ -77,54 +77,6 @@ public class JdbcMetricEntity implements Serializable {
     @TableField("resource_code")
     private Integer resourceCode;
 
-    public static JdbcMetricEntity copyOf(JdbcMetricEntity oldEntity) {
-        JdbcMetricEntity entity = new JdbcMetricEntity();
-        entity.setId(oldEntity.getId());
-        entity.setGmtCreate(oldEntity.getGmtCreate());
-        entity.setGmtModified(oldEntity.getGmtModified());
-        entity.setApp(oldEntity.getApp());
-        entity.setTimestamp(oldEntity.getTimestamp());
-        entity.setResource(oldEntity.getResource());
-        entity.setPassQps(oldEntity.getPassQps());
-        entity.setBlockQps(oldEntity.getBlockQps());
-        entity.setSuccessQps(oldEntity.getSuccessQps());
-        entity.setExceptionQps(oldEntity.getExceptionQps());
-        entity.setRt(oldEntity.getRt());
-        entity.setCount(oldEntity.getCount());
-        return entity;
-    }
-
-    public synchronized void addPassQps(Long passQps) {
-        this.passQps += passQps;
-    }
-
-    public synchronized void addBlockQps(Long blockQps) {
-        this.blockQps += blockQps;
-    }
-
-    public synchronized void addExceptionQps(Long exceptionQps) {
-        this.exceptionQps += exceptionQps;
-    }
-
-    public synchronized void addCount(int count) {
-        this.count += count;
-    }
-
-    public synchronized void addRtAndSuccessQps(double avgRt, Long successQps) {
-        this.rt += avgRt * successQps;
-        this.successQps += successQps;
-    }
-
-    /**
-     * {@link #rt} = {@code avgRt * successQps}
-     *
-     * @param avgRt      average rt of {@code successQps}
-     * @param successQps
-     */
-    public synchronized void setRtAndSuccessQps(double avgRt, Long successQps) {
-        this.rt = avgRt * successQps;
-        this.successQps = successQps;
-    }
 
     public Long getId() {
         return id;
@@ -172,7 +124,6 @@ public class JdbcMetricEntity implements Serializable {
 
     public void setResource(String resource) {
         this.resource = resource;
-        this.resourceCode = resource.hashCode();
     }
 
     public Long getPassQps() {
@@ -181,6 +132,14 @@ public class JdbcMetricEntity implements Serializable {
 
     public void setPassQps(Long passQps) {
         this.passQps = passQps;
+    }
+
+    public Long getSuccessQps() {
+        return successQps;
+    }
+
+    public void setSuccessQps(Long successQps) {
+        this.successQps = successQps;
     }
 
     public Long getBlockQps() {
@@ -199,51 +158,46 @@ public class JdbcMetricEntity implements Serializable {
         this.exceptionQps = exceptionQps;
     }
 
-    public double getRt() {
+    public Double getRt() {
         return rt;
     }
 
-    public void setRt(double rt) {
+    public void setRt(Double rt) {
         this.rt = rt;
     }
 
-    public int getCount() {
+    public Integer getCount() {
         return count;
     }
 
-    public void setCount(int count) {
+    public void setCount(Integer count) {
         this.count = count;
     }
 
-    public int getResourceCode() {
+    public Integer getResourceCode() {
         return resourceCode;
     }
 
-    public Long getSuccessQps() {
-        return successQps;
-    }
-
-    public void setSuccessQps(Long successQps) {
-        this.successQps = successQps;
+    public void setResourceCode(Integer resourceCode) {
+        this.resourceCode = resourceCode;
     }
 
     @Override
     public String toString() {
-        return "MetricEntity{" +
-            "id=" + id +
-            ", gmtCreate=" + gmtCreate +
-            ", gmtModified=" + gmtModified +
-            ", app='" + app + '\'' +
-            ", timestamp=" + timestamp +
-            ", resource='" + resource + '\'' +
-            ", passQps=" + passQps +
-            ", blockQps=" + blockQps +
-            ", successQps=" + successQps +
-            ", exceptionQps=" + exceptionQps +
-            ", rt=" + rt +
-            ", count=" + count +
-            ", resourceCode=" + resourceCode +
-            '}';
+        return "JdbcMetricEntity{" +
+                "id=" + id +
+                ", gmtCreate=" + gmtCreate +
+                ", gmtModified=" + gmtModified +
+                ", app='" + app + '\'' +
+                ", timestamp=" + timestamp +
+                ", resource='" + resource + '\'' +
+                ", passQps=" + passQps +
+                ", successQps=" + successQps +
+                ", blockQps=" + blockQps +
+                ", exceptionQps=" + exceptionQps +
+                ", rt=" + rt +
+                ", count=" + count +
+                ", resourceCode=" + resourceCode +
+                '}';
     }
-
 }
